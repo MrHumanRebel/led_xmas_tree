@@ -60,13 +60,6 @@ Ez a projekt egy **három csatornás LED szalag vezérlő**, kifejezetten **kar�
 
 ---
 
-## 📷 Eurokarácsonyi használat
-
-Ez a vezérlő ideális arra a célra, hogy a karácsonyfa világítás **hangulatos**, **vezérelhető**, és ne “boldog-karácsonyt” automatikusan, hanem **kívánság szerint** változtatható legyen (pl. vendégek érkezésekor effektváltás).  
-A három szalaggal (három ág, mennyezet körül, fa körül) látványos eredményt kapsz.
-
----
-
 ## 🧑‍💻 Szerző & Licenc
 
 - **Licenc:** MIT  
