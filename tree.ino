@@ -118,15 +118,28 @@ enum Effect: uint8_t {
 
 struct Params {
   uint8_t effect   = FX_STATIC_WARM; // DEFAULT
-  uint8_t speed    = 20;   // 0..100 (háromszög jobbra)
+  uint8_t speed    = 20;   // 0..100 (NEM rotaryról áll most) // <<<
   uint8_t density  = 10;   // 0..100 (pl. csillag/gyertya mennyiség)
   uint8_t intensity= 40;   // 0..100 (fényerő a mintákon belül)
 } P;
 
 struct FxState { uint32_t i=0; } F;
 
+// --------- Effektenként fix sebességek (0..100) – SZABADON ÁTÍRHATÓ --------- // <<<
+uint8_t EFFECT_SPEED[FX_COUNT] = {
+  10, // FX_STATIC_WARM
+  10, // FX_STATIC_COOL
+  40, // FX_SOFT_RUNNER_WARM
+  40, // FX_SOFT_RUNNER_COOL
+  30, // FX_STAR_COOL
+  20, // FX_CANDLE_WARM
+  15  // FX_ELEGANT_FIRE
+};
+
 // sebesség -> lépésköz (ms), min. 5% tempó
-inline uint8_t  effectiveSpeed()                    { return max<uint8_t>(5, P.speed); }
+inline uint8_t  effectiveSpeed() {               // <<< most az effekt saját sebességét használjuk
+  return max<uint8_t>(5, EFFECT_SPEED[P.effect]);
+}
 inline uint16_t stepIntervalMs(uint16_t slow=90, uint16_t fast=10) {
   return map(effectiveSpeed(), 5, 100, slow, fast);
 }
@@ -135,14 +148,12 @@ inline uint16_t stepIntervalMs(uint16_t slow=90, uint16_t fast=10) {
 
 // 1) Statikus meleg fehér
 void fxStaticWarm(){
-  // Megjelenés: egységes, lágy melegfehér (W domináns, arany tónus)
   C4 c = Col::lerp(WHITEW, GOLD2, 150);
   vFill(Col::toCol(c));
 }
 
 // 2) Statikus hideg fehér
 void fxStaticCool(){
-  // Megjelenés: tiszta, modern hideg fehér
   C4 c = Col::lerp(SILVER, WHITEW, 220);
   vFill(Col::toCol(c));
 }
@@ -160,7 +171,7 @@ void fxSoftRunnerCore(const C4& base, uint8_t bgScale){
   vFill(Col::toCol(bg));
 
   // futó gaussian „púp”
-  float pos   = fmodf(F.i * (0.6f + P.speed/160.0f), (float)VNUM);
+  float pos   = fmodf(F.i * (0.6f + effectiveSpeed()/160.0f), (float)VNUM); // <<< speed innen jön
   float sigma = max<float>(6.0f, VNUM / 28.0f); // széles, lágy
   uint8_t peak = map(P.intensity, 0,100, 140, 255);
 
@@ -292,7 +303,7 @@ void fxElegantFire(){
   vFill(Col::toCol(base));
 
   // több, nagyon lassú szinusz réteg összegzése (lágy "tűznyelv")
-  float t = F.i / (220.0f - P.speed*1.2f); // lassú időskála
+  float t = F.i / (220.0f - effectiveSpeed()*1.2f); // <<< speed innen jön
   for (uint16_t i=0;i<VNUM;i++){
     float u = (float)i / VNUM;
     float s =
@@ -365,9 +376,10 @@ const int8_t QDEC_LUT[16] = {
    0, +1, -1, 0
 };
 
-// háromszög-sebesség számláló (0..100..0)
+// háromszög-sebesség számláló – NEM használjuk többé rotaryhoz // <<<
+// Meghagyom a helper-t, de nem hívjuk sehol.
 int triangleStep(int current, int step, int minV=0, int maxV=100){
-  static int dir = +1; // jobbra kezdetben növel
+  static int dir = +1;
   int v = current + dir * step;
   if (v >= maxV){ v = maxV; dir = -1; }
   else if (v <= minV){ v = minV; dir = +1; }
@@ -393,19 +405,23 @@ void applyEncoder(){
   encDelta = 0;
   if (!d) return;
 
+  // <<< ROTARY CSAK EFFEKT LÉPTETÉS >>>
   if (d < 0){
-    // BALRA: effekt váltás vissza (wrap)
     for (int8_t k=d; k<0; ++k){
       int e = (int)P.effect - 1;
       if (e < 0) e = FX_COUNT - 1;
       P.effect = (uint8_t)e;
     }
   } else if (d > 0){
-    // JOBBRA: sebesség háromszög 0..100..0
     for (int8_t k=0; k<d; ++k){
-      P.speed = (uint8_t)triangleStep(P.speed, 5, 0, 100);
+      int e = (int)P.effect + 1;
+      if (e >= FX_COUNT) e = 0;
+      P.effect = (uint8_t)e;
     }
   }
+
+  // Effektváltás után vegye fel az adott effekt fix sebességét // <<<
+  P.speed = EFFECT_SPEED[P.effect];
 }
 
 bool btnLast = false;               // PULLDOWN -> alap LOW
@@ -419,9 +435,23 @@ void buttonPoll(){
     btnLast = s;
     btnLastMs = now;
     if (s == HIGH){
-      // 0–25–50–75–100–75–50–25–0 háromszög-lépcső
-      static const uint8_t stepsPct[] = { 0, 64, 128, 191, 255, 191, 128, 64, 0 };
-      static uint8_t idx = 1; // induljunk 25%-ról (64)
+      // 15–100% közötti egyenletes lépcsők oda-vissza háromszögben
+      static const uint8_t stepsPct[] = {
+        38,   // ≈15%
+        64,   // ≈25%
+        102,  // ≈40%
+        140,  // ≈55%
+        178,  // ≈70%
+        216,  // ≈85%
+        255,  // 100%
+        216,  // vissza 85%
+        178,  // vissza 70%
+        140,  // vissza 55%
+        102,  // vissza 40%
+        64,   // vissza 25%
+        38    // vissza 15%
+      };
+      static uint8_t idx = 0;
       idx = (idx + 1) % (sizeof(stepsPct) / sizeof(stepsPct[0]));
       globalMaxBrightness = stepsPct[idx];
       for (auto* s : S) s->setBrightness(globalMaxBrightness);
@@ -439,7 +469,8 @@ void setup(){
   // kezdő állapot beolvasása
   encPrevAB = (digitalRead(ENC_PIN_A)?1:0) | (digitalRead(ENC_PIN_B)?2:0);
 
-  // alap: Statikus meleg fehér
+  // alap: Statikus meleg fehér + effekt fix speed felvétele
+  P.speed = EFFECT_SPEED[P.effect]; // <<< induló speed az effekté
   fxStaticWarm();
   vShow();
 }
