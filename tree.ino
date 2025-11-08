@@ -42,93 +42,72 @@ struct Col {
   }
 };
 
-// ---------- HBP-féle RGB->RGBW (HSI alap, hue-megőrző bontás) ----------
-struct HBPConv {
-  struct Cal {
-    float gR=1.0f, gG=1.0f, gB=1.0f, gW=1.0f;   // lineáris gain
-    float whiteScale=1.0f;                      // W skála (0.8..1.2 jellemző)
-  };
-  static Cal& calib(){ static Cal c; return c; }
+// ---------- HEX -> C4 {r,g,b,w}  (#RRGGBB | RRGGBB | #RGB | RGB)
+// Arduino csak a globális névtérben lévő függvényekhez generál előre prototípust,
+// ezért tesszük névtérbe – így nem kerül a fájl tetejére a prototípus C4 előtt.
+namespace HBPConv {
+  static inline C4 hexToRgbw(const char* hex) {
+    if (!hex) return C4{0,0,0,0};
 
-  static inline float srgb_to_linear(float c01){
-    return (c01 <= 0.04045f) ? (c01/12.92f) : powf((c01+0.055f)/1.055f, 2.4f);
-  }
-  static inline float linear_to_srgb(float c){
-    return (c<=0.0031308f) ? (12.92f*c) : (1.055f*powf(c, 1.0f/2.4f)-0.055f);
-  }
-  static inline uint8_t to_u8(float c01){
-    if (c01 <= 0.0f) return 0;
-    if (c01 >= 1.0f) return 255;
-    return (uint8_t)(c01*255.0f + 0.5f);
-  }
-
-  static RGBW8 rgb_to_rgbw(uint8_t R8, uint8_t G8, uint8_t B8){
-    Cal &H = calib();
-    // sRGB -> lineáris
-    float R = srgb_to_linear(R8/255.0f);
-    float G = srgb_to_linear(G8/255.0f);
-    float B = srgb_to_linear(B8/255.0f);
-
-    // lineáris gain
-    R = fminf(1.f, R * H.gR);
-    G = fminf(1.f, G * H.gG);
-    B = fminf(1.f, B * H.gB);
-
-    // HSI: I=(R+G+B)/3 ; S=1-min/I
-    float I = (R + G + B) / 3.0f;
-    float mn = fminf(R, fminf(G, B));
-    float S = (I > 1e-6f) ? (1.0f - (mn / I)) : 0.0f;
-
-    // W = (1-S)*I  (nem-szaturált rész W-be)
-    float W = (1.0f - S) * I * H.whiteScale;
-    W = fminf(fmaxf(W, 0.0f), 1.0f);
-
-    // RGB-ből kivonjuk a W-t (lineáris tér)
-    float Rl = fmaxf(0.0f, R - W);
-    float Gl = fmaxf(0.0f, G - W);
-    float Bl = fmaxf(0.0f, B - W);
-    float Wl = W;
-
-    // vissza sRGB + W gain
-    uint8_t r = to_u8( linear_to_srgb(Rl) );
-    uint8_t g = to_u8( linear_to_srgb(Gl) );
-    uint8_t b = to_u8( linear_to_srgb(Bl) );
-    uint8_t w = to_u8( linear_to_srgb( fminf(1.f, Wl * H.gW) ) );
-    RGBW8 out{r,g,b,w};
-    return out;
-  }
-
-  static RGBW8 hex_to_rgbw(const char* hex){
-    auto hv = [](char c)->int{
-      if(c>='0'&&c<='9') return c-'0';
-      if(c>='a'&&c<='f') return 10+(c-'a');
-      if(c>='A'&&c<='F') return 10+(c-'A');
+    auto hv = [](char c)->int {
+      if (c>='0' && c<='9') return c - '0';
+      if (c>='a' && c<='f') return 10 + (c - 'a');
+      if (c>='A' && c<='F') return 10 + (c - 'A');
       return -1;
     };
-    if(!hex){ RGBW8 z{0,0,0,0}; return z; }
-    if(*hex=='#') ++hex;
-    else if(hex[0]=='0' && (hex[1]=='x'||hex[1]=='X')) hex+=2;
 
-    size_t n=0; while(hex[n] && n<8) ++n;
-    int r=0,g=0,b=0;
-    if(n==6){
-      int h1=hv(hex[0]),h2=hv(hex[1]),h3=hv(hex[2]),h4=hv(hex[3]),h5=hv(hex[4]),h6=hv(hex[5]);
-      if(h1<0||h2<0||h3<0||h4<0||h5<0||h6<0){ RGBW8 z{0,0,0,0}; return z; }
-      r=(h1<<4)|h2; g=(h3<<4)|h4; b=(h5<<4)|h6;
-    }else if(n==3){
-      int h1=hv(hex[0]),h2=hv(hex[1]),h3=hv(hex[2]);
-      if(h1<0||h2<0||h3<0){ RGBW8 z{0,0,0,0}; return z; }
-      r=(h1<<4)|h1; g=(h2<<4)|h2; b=(h3<<4)|h3;
-    }else { RGBW8 z{0,0,0,0}; return z; }
+    if (*hex == '#') ++hex;
+    else if (hex[0]=='0' && (hex[1]=='x' || hex[1]=='X')) hex += 2;
 
-    return rgb_to_rgbw((uint8_t)r,(uint8_t)g,(uint8_t)b);
+    size_t n = 0;
+    while (hex[n] && n < 8) ++n;
+
+    uint8_t r=0,g=0,b=0;
+
+    if (n == 6) {
+      int h1=hv(hex[0]), h2=hv(hex[1]),
+          h3=hv(hex[2]), h4=hv(hex[3]),
+          h5=hv(hex[4]), h6=hv(hex[5]);
+      if (h1<0||h2<0||h3<0||h4<0||h5<0||h6<0) return C4{0,0,0,0};
+      r = (uint8_t)((h1<<4)|h2);
+      g = (uint8_t)((h3<<4)|h4);
+      b = (uint8_t)((h5<<4)|h6);
+    } else if (n == 3) {
+      int h1=hv(hex[0]), h2=hv(hex[1]), h3=hv(hex[2]);
+      if (h1<0||h2<0||h3<0) return C4{0,0,0,0};
+      r = (uint8_t)((h1<<4)|h1);
+      g = (uint8_t)((h2<<4)|h2);
+      b = (uint8_t)((h3<<4)|h3);
+    } else {
+      return C4{0,0,0,0};
+    }
+
+    auto clamp8 = [](int v)->uint8_t { return (uint8_t)(v<0?0:(v>255?255:v)); };
+
+    float Ri = (float)r, Gi = (float)g, Bi = (float)b;
+
+    float tM = (Ri > Gi ? (Ri > Bi ? Ri : Bi) : (Gi > Bi ? Gi : Bi));
+    if (tM <= 0.0f) return C4{0,0,0,0};
+
+    float multiplier = 255.0f / tM;
+    float hR = Ri * multiplier;
+    float hG = Gi * multiplier;
+    float hB = Bi * multiplier;
+
+    float M = (hR > hG ? (hR > hB ? hR : hB) : (hG > hB ? hG : hB));
+    float m = (hR < hG ? (hR < hB ? hR : hB) : (hG < hB ? hG : hB));
+
+    float Luminance = ((M + m) * 0.5f - 127.5f) * (255.0f/127.5f) / multiplier;
+
+    int Wo = (int)lrintf(Luminance);
+    int Bo = (int)lrintf(Bi - Luminance);
+    int Ro = (int)lrintf(Ri - Luminance);
+    int Go = (int)lrintf(Gi - Luminance);
+
+    return C4{ clamp8(Ro), clamp8(Go), clamp8(Bo), clamp8(Wo) };
   }
-
-  static C4 hex_to_c4(const char* s){
-    RGBW8 q = hex_to_rgbw(s);
-    return C4{q.r,q.g,q.b,q.w};
-  }
-};
+}
+using HBPConv::hexToRgbw;  // ugyanazzal a névvel használható lent
 
 // ---------- LED / HW ----------
 const uint8_t PIN_STRIP_A = 4;
@@ -191,12 +170,10 @@ C4 VB::vbuf[VNUM];
 
 static void VB_show_with_phase()
 {
-  // Csak akkor állítunk fényerőt, ha tényleg változott (kevesebb tranziens)
   static uint8_t s_lastBrightness = 255;
   bool brChanged = (s_lastBrightness != globalMaxBrightness);
   if (brChanged) s_lastBrightness = globalMaxBrightness;
 
-  // VBUF → NeoPixel bufferek
   for (uint16_t i=0; i<VNUM; ++i) {
     uint8_t  sidx = i / NUM_LEDS;
     uint16_t p    = i % NUM_LEDS;
@@ -204,10 +181,7 @@ static void VB_show_with_phase()
     S[sidx]->setPixelColor(p, ColorW(c.r, c.g, c.b, c.w));
   }
 
-  // --- Minimális szinkronizált fáziseltolás ---
-  // Mindhárom szalag egymás után frissül, X ms késleltetéssel,
-  // hogy ne egyszerre érkezzen a nagy áramcsúcs.
-  const uint16_t PHASE_US = 3000; 
+  const uint16_t PHASE_US = 3000;
   for (int i = 0; i < 3; ++i) {
     if (brChanged) S[i]->setBrightness(s_lastBrightness);
     S[i]->show();
@@ -216,18 +190,18 @@ static void VB_show_with_phase()
 }
 
 // ---------- Színek (HEX→HBP→C4) ----------
-const C4 BLUE        = HBPConv::hex_to_c4("#00072D");
-const C4 CYAN        = HBPConv::hex_to_c4("#ADD8E6");
-const C4 MINT        = HBPConv::hex_to_c4("#2F4F4F");
-const C4 MALLOW      = HBPConv::hex_to_c4("#B86B77");
-const C4 ROSEGOLD    = HBPConv::hex_to_c4("#B76E79");
-const C4 LIGHTPINK   = HBPConv::hex_to_c4("#F5428D");
-const C4 GOLD        = HBPConv::hex_to_c4("#FFFAED");
-const C4 SILVER      = HBPConv::hex_to_c4("#808080");
-const C4 GREY        = HBPConv::hex_to_c4("#696969");
-const C4 DARKPURPLE  = HBPConv::hex_to_c4("#3A0475");
-const C4 LIGHTPURPLE = HBPConv::hex_to_c4("#AB65F8");
-const C4 PINK        = HBPConv::hex_to_c4("#BC4DC1");
+const C4 BLUE        = hexToRgbw("#00072D");
+const C4 CYAN        = hexToRgbw("#ADD8E6");
+const C4 MINT        = hexToRgbw("#2F4F4F");
+const C4 MALLOW      = hexToRgbw("#B86B77");
+const C4 ROSEGOLD    = hexToRgbw("#B76E79");
+const C4 LIGHTPINK   = hexToRgbw("#F5428D");
+const C4 GOLD        = hexToRgbw("#FFFAED");
+const C4 SILVER      = hexToRgbw("#808080");
+const C4 GREY        = hexToRgbw("#696969");
+const C4 DARKPURPLE  = hexToRgbw("#3A0475");
+const C4 LIGHTPURPLE = hexToRgbw("#AB65F8");
+const C4 PINK        = hexToRgbw("#BC4DC1");
 
 // ---------- Effekt lista ----------
 enum Effect : uint8_t {
@@ -278,7 +252,7 @@ static void fxStarCool(uint8_t speed){
   for (uint16_t i=0;i<VNUM;i+=32) VB::set(i, haze);
   uint8_t n   = map(P.density, 0,100, 0, 10);
   uint8_t amp = map(P.intensity,0,100, 160, 255);
-  for (uint8_t k=0;k<n;k++){ VB::set(random(VNUM), C4{0,0,0,amp}); } // W-szikra
+  for (uint8_t k=0;k<n;k++){ VB::set(random(VNUM), C4{0,0,0,amp}); }
 }
 
 static void fxStarPink(uint8_t speed){
@@ -315,11 +289,11 @@ static void fxPulseMallow(uint8_t speed){
   uint32_t periodMs = map(s, 1, 100, 180000UL, 8000UL);
   uint32_t now = millis();
   float phase = (float)(now % periodMs) / (float)periodMs;
-  float wave  = 0.5f * (1.0f - cosf(6.2831853f * phase)); // 0..1
+  float wave  = 0.5f * (1.0f - cosf(6.2831853f * phase));
   const uint8_t kMin = 26, kMax = 89;
   float targetK = (float)kMin + (float)(kMax - kMin) * wave;
   static float kf = kMin;
-  float alpha = 0.06f; // kis simítás
+  float alpha = 0.06f;
   kf += alpha * (targetK - kf);
   uint8_t k = (uint8_t)(kf + 0.5f);
   VB::fill(Col::scale(MALLOW, k));
@@ -338,7 +312,6 @@ static void fxRunSilver(uint8_t speed){
   if (g_fxJustActivated) { primed=false; pos=-1; dir=+1; t0=0; }
 
   uint32_t now = millis();
-  // régi: if (now - t0 < stepIntervalMs(speed, 70, 8)) return;
   if (now - t0 < stepIntervalMs(speed, 20, 4)) return;  // 2× gyorsabb
   t0 = now;
 
@@ -523,7 +496,6 @@ static void applyEncoderImmediate(){
   P.effect = EFFECT_ORDER[idx];
   P.speed  = defaultSpeedFor(P.effect);
 
-  // azonnali blackout váltáskor
   VB::fill(C4{0,0,0,0});
   VB_show_with_phase();
   delay(1);
