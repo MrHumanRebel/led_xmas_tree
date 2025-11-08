@@ -189,6 +189,32 @@ struct VB {
 };
 C4 VB::vbuf[VNUM];
 
+static void VB_show_with_phase()
+{
+  // Csak akkor állítunk fényerőt, ha tényleg változott (kevesebb tranziens)
+  static uint8_t s_lastBrightness = 255;
+  bool brChanged = (s_lastBrightness != globalMaxBrightness);
+  if (brChanged) s_lastBrightness = globalMaxBrightness;
+
+  // VBUF → NeoPixel bufferek
+  for (uint16_t i=0; i<VNUM; ++i) {
+    uint8_t  sidx = i / NUM_LEDS;
+    uint16_t p    = i % NUM_LEDS;
+    const C4& c = VB::vbuf[i];
+    S[sidx]->setPixelColor(p, ColorW(c.r, c.g, c.b, c.w));
+  }
+
+  // --- Minimális szinkronizált fáziseltolás ---
+  // Mindhárom szalag egymás után frissül, X ms késleltetéssel,
+  // hogy ne egyszerre érkezzen a nagy áramcsúcs.
+  const uint16_t PHASE_US = 3000; 
+  for (int i = 0; i < 3; ++i) {
+    if (brChanged) S[i]->setBrightness(s_lastBrightness);
+    S[i]->show();
+    if (i < 2) delayMicroseconds(PHASE_US);
+  }
+}
+
 // ---------- Színek (HEX→HBP→C4) ----------
 const C4 BLUE        = HBPConv::hex_to_c4("#00072D");
 const C4 CYAN        = HBPConv::hex_to_c4("#ADD8E6");
@@ -431,7 +457,7 @@ static void renderAll() {
     case FX_STAR_PURPLE:        fxStarPurple(P.speed);          break;
   }
 
-  VB::show();
+  VB_show_with_phase();
   yield(); delay(1);
 }
 
@@ -499,7 +525,7 @@ static void applyEncoderImmediate(){
 
   // azonnali blackout váltáskor
   VB::fill(C4{0,0,0,0});
-  VB::show();
+  VB_show_with_phase();
   delay(1);
 }
 
@@ -514,7 +540,7 @@ static void buttonPoll(){
   if (s != btnLast && (now - btnLastMs) > BTN_DEBOUNCE_MS){
     btnLast = s; btnLastMs = now;
     if (s == HIGH){
-      static const uint8_t stepsPct[] = { 13, 64, 102, 140, 178, 216, 255, 216, 178, 140, 102, 64, 13 };
+      static const uint8_t stepsPct[] = { 13,  38,  64,  89, 115, 140, 166, 191, 217, 191, 166, 140, 115,  89,  64,  38,  13 };
       static uint8_t idx = 0;
       idx = (idx + 1) % (sizeof(stepsPct)/sizeof(stepsPct[0]));
       globalMaxBrightness = stepsPct[idx];
@@ -537,7 +563,7 @@ void setup(){
   P.effect = FX_STATIC_WARM;
   P.speed  = defaultSpeedFor(P.effect);
   fxStaticWarm();
-  VB::show();
+  VB_show_with_phase();
 }
 
 void loop(){
